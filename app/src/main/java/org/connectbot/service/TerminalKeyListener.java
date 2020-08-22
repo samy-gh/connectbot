@@ -49,6 +49,8 @@ public class TerminalKeyListener implements OnKeyListener, OnSharedPreferenceCha
 	public final static int OUR_ALT_LOCK = 0x08;
 	public final static int OUR_SHIFT_ON = 0x10;
 	public final static int OUR_SHIFT_LOCK = 0x20;
+	public final static int OUR_CTRL_LOCK2 = 0x100;		// PCの様な押している間だけCTRL有効
+	public final static int OUR_SHIFT_LOCK2 = 0x400;	// PCの様な押している間だけSHIFT有効
 	private final static int OUR_SLASH = 0x40;
 	private final static int OUR_TAB = 0x80;
 
@@ -57,9 +59,9 @@ public class TerminalKeyListener implements OnKeyListener, OnSharedPreferenceCha
 			| OUR_SHIFT_ON | OUR_SLASH | OUR_TAB;
 
 	// The bit mask of momentary and lock states for each
-	private final static int OUR_CTRL_MASK = OUR_CTRL_ON | OUR_CTRL_LOCK;
+	private final static int OUR_CTRL_MASK = OUR_CTRL_ON | OUR_CTRL_LOCK | OUR_CTRL_LOCK2;
 	private final static int OUR_ALT_MASK = OUR_ALT_ON | OUR_ALT_LOCK;
-	private final static int OUR_SHIFT_MASK = OUR_SHIFT_ON | OUR_SHIFT_LOCK;
+	private final static int OUR_SHIFT_MASK = OUR_SHIFT_ON | OUR_SHIFT_LOCK | OUR_SHIFT_LOCK2;
 
 	// backport constants from api level 11
 	private final static int KEYCODE_ESCAPE = 111;
@@ -104,6 +106,9 @@ public class TerminalKeyListener implements OnKeyListener, OnSharedPreferenceCha
 
 	private final SharedPreferences prefs;
 
+	private boolean key_log = false;
+//	private boolean key_log = true;
+
 	public TerminalKeyListener(TerminalManager manager,
 			TerminalBridge bridge,
 			VDUBuffer buffer,
@@ -135,16 +140,25 @@ public class TerminalKeyListener implements OnKeyListener, OnSharedPreferenceCha
 			if (bridge.isDisconnected() || bridge.transport == null)
 				return false;
 
+			if( key_log ) {
+				String s = String.format("action=%d key=%d(0x%x), meta=%d(0x%x)", event.getAction(), keyCode, keyCode, ourMetaState, ourMetaState);
+				Log.v(TAG,"ConnKey12 onKey" +s);	//debug
+			}
+
 			final boolean interpretAsHardKeyboard = deviceHasHardKeyboard &&
 					!manager.hardKeyboardHidden;
 			final boolean rightModifiersAreSlashAndTab = interpretAsHardKeyboard &&
 					PreferenceConstants.KEYMODE_RIGHT.equals(keymode);
 			final boolean leftModifiersAreSlashAndTab = interpretAsHardKeyboard &&
 					PreferenceConstants.KEYMODE_LEFT.equals(keymode);
-			final boolean shiftedNumbersAreFKeys = shiftedNumbersAreFKeysOnHardKeyboard &&
-					interpretAsHardKeyboard;
-			final boolean controlNumbersAreFKeys = controlNumbersAreFKeysOnSoftKeyboard &&
-					!interpretAsHardKeyboard;
+//			final boolean shiftedNumbersAreFKeys = false;
+			final boolean shiftedNumbersAreFKeys = shiftedNumbersAreFKeysOnHardKeyboard;
+//			final boolean shiftedNumbersAreFKeys = shiftedNumbersAreFKeysOnHardKeyboard &&
+//					interpretAsHardKeyboard;
+//			final boolean controlNumbersAreFKeys = false;
+			final boolean controlNumbersAreFKeys = controlNumbersAreFKeysOnSoftKeyboard;
+//			final boolean controlNumbersAreFKeys = controlNumbersAreFKeysOnSoftKeyboard &&
+//					!interpretAsHardKeyboard;
 
 			// Ignore all key-up events except for the special keys
 			if (event.getAction() == KeyEvent.ACTION_UP) {
@@ -172,6 +186,43 @@ public class TerminalKeyListener implements OnKeyListener, OnSharedPreferenceCha
 						bridge.transport.write(0x09);
 						return true;
 					}
+				} else {
+					switch (keyCode) {
+					case KeyEvent.KEYCODE_ALT_LEFT:
+					case KeyEvent.KEYCODE_CTRL_LEFT:
+					case KeyEvent.KEYCODE_CAPS_LOCK:	// API11
+					case KeyEvent.KEYCODE_MUHENKAN:		// API16
+					case KeyEvent.KEYCODE_EISU:			// API16
+					case KeyEvent.KEYCODE_KANA:			// API16
+					case KeyEvent.KEYCODE_HENKAN:		// API16
+					case 227:							// API?? TK-FBP043 mod3時の変換キー
+						ourMetaState &= ~(OUR_CTRL_LOCK2 | OUR_CTRL_LOCK | OUR_CTRL_ON);
+						bridge.redraw();
+						return true;
+					case KeyEvent.KEYCODE_SHIFT_LEFT:
+					case KeyEvent.KEYCODE_SHIFT_RIGHT:
+						ourMetaState &= ~(OUR_SHIFT_LOCK2 | OUR_SHIFT_LOCK | OUR_SHIFT_ON);
+						bridge.redraw();
+						return true;
+					}
+					switch (event.getScanCode()) {
+					case 56:	// BSKBB15 ALT-LEFT -> CTRL
+					case 58:	// TK-FBP043 CapsLock
+					case 94:	// TK-FBP043 無変換
+					case 92:	// TK-FBP043 mode1時の変換キー
+					case 122:	// TK-FBP043 mode3時の変換キー
+						ourMetaState &= ~(OUR_CTRL_LOCK2 | OUR_CTRL_LOCK | OUR_CTRL_ON);
+						bridge.redraw();
+						return true;
+					case 326:	// BSKBB15 Win -> ALT
+						ourMetaState &= ~OUR_ALT_LOCK;
+						bridge.redraw();
+						return true;
+					case 327:	// BSKBB15 CTRL-LEFT
+						ourMetaState &= ~OUR_CTRL_LOCK;
+						bridge.redraw();
+						return true;
+					}
 				}
 
 				return false;
@@ -195,6 +246,14 @@ public class TerminalKeyListener implements OnKeyListener, OnSharedPreferenceCha
 			if (keyCode == KeyEvent.KEYCODE_UNKNOWN &&
 					event.getAction() == KeyEvent.ACTION_MULTIPLE) {
 				byte[] input = event.getCharacters().getBytes(encoding);
+				if( key_log ) {
+					String s2 = "";
+					for( byte uchar: input ) {
+						s2 += String.format(" char=%d(0x%x)", uchar, uchar);
+					}
+					Log.v(TAG,"ConnKey MULTI:" +s2);	//debug
+				}
+				ourMetaState &= ~OUR_TRANSIENT;
 				bridge.transport.write(input);
 				return true;
 			}
@@ -234,19 +293,119 @@ public class TerminalKeyListener implements OnKeyListener, OnSharedPreferenceCha
 				} else {
 					switch (keyCode) {
 					case KeyEvent.KEYCODE_ALT_LEFT:
+					case KeyEvent.KEYCODE_CTRL_LEFT:
+					case KeyEvent.KEYCODE_CAPS_LOCK:	// API11
+					case KeyEvent.KEYCODE_MUHENKAN:		// API16
+					case KeyEvent.KEYCODE_EISU:			// API16
+					case KeyEvent.KEYCODE_KANA:			// API16
+					case KeyEvent.KEYCODE_HENKAN:		// API16
+					case 227:							// API?? TK-FBP043 mod3時の変換キー
+						ourMetaState |= OUR_CTRL_LOCK2;
+						bridge.redraw();
+						return true;
 					case KeyEvent.KEYCODE_ALT_RIGHT:
 						metaPress(OUR_ALT_ON);
 						return true;
+					case KeyEvent.KEYCODE_CTRL_RIGHT:
+						metaPress(OUR_CTRL_ON);
+						return true;
 					case KeyEvent.KEYCODE_SHIFT_LEFT:
 					case KeyEvent.KEYCODE_SHIFT_RIGHT:
-						metaPress(OUR_SHIFT_ON);
+//						metaPress(OUR_SHIFT_ON);
+						ourMetaState |= OUR_SHIFT_LOCK2;
+						bridge.redraw();
 						return true;
+					case KeyEvent.KEYCODE_PAGE_UP:		// API9
+						((vt320) buffer).keyPressed(vt320.KEY_PAGE_UP, ' ', getStateForBuffer());
+						ourMetaState &= ~OUR_TRANSIENT;
+						bridge.tryKeyVibrate();
+												return true;
+					case KeyEvent.KEYCODE_PAGE_DOWN:	// API9
+						((vt320) buffer).keyPressed(vt320.KEY_PAGE_DOWN, ' ', getStateForBuffer());
+						ourMetaState &= ~OUR_TRANSIENT;
+						bridge.tryKeyVibrate();
+												return true;
+					case KeyEvent.KEYCODE_MOVE_HOME:	// API11
+						((vt320) buffer).keyPressed(vt320.KEY_HOME, ' ', getStateForBuffer());
+						ourMetaState &= ~OUR_TRANSIENT;
+						bridge.tryKeyVibrate();
+						return true;
+					case KeyEvent.KEYCODE_MOVE_END:		// API11
+						((vt320) buffer).keyPressed(vt320.KEY_END, ' ', getStateForBuffer());
+						ourMetaState &= ~OUR_TRANSIENT;
+						bridge.tryKeyVibrate();
+						return true;
+					case KeyEvent.KEYCODE_FORWARD_DEL:	// API11
+						((vt320) buffer).keyPressed(vt320.KEY_DELETE, ' ', getStateForBuffer());
+						ourMetaState &= ~OUR_TRANSIENT;
+						bridge.tryKeyVibrate();
+						return true;
+					case KeyEvent.KEYCODE_DEL:			// API1
+						((vt320) buffer).keyPressed(vt320.KEY_BACK_SPACE, ' ', getStateForBuffer());
+						ourMetaState &= ~OUR_TRANSIENT;
+						bridge.tryKeyVibrate();
+						return true;
+//					case KeyEvent.KEYCODE_SCROLL_LOCK:	// API11
+//						return true;
+					}
+					switch (event.getScanCode()) {
+					case 56:	// BSKBB15 ALT-LEFT -> CTRL
+					case 58:	// TK-FBP043 CapsLock
+					case 94:	// TK-FBP043 無変換
+					case 92:	// TK-FBP043 mode1時の変換キー
+					case 122:	// TK-FBP043 mod33時の変換キー
+						ourMetaState |= OUR_CTRL_LOCK2;
+						bridge.redraw();
+						return true;
+					case 326:	// BSKBB15 Win -> ALT
+						metaPress(OUR_ALT_ON);
+						return true;
+					case 327:	// BSKBB15 CTRL-LEFT
+						metaPress(OUR_CTRL_ON);
+						return true;
+					case 104:	// TK-FBP043 PageUp
+						((vt320) buffer).keyPressed(vt320.KEY_PAGE_UP, ' ', getStateForBuffer());
+						ourMetaState &= ~OUR_TRANSIENT;
+						bridge.tryKeyVibrate();
+						return true;
+					case 109:	// TK-FBP043 PageDown
+						((vt320) buffer).keyPressed(vt320.KEY_PAGE_DOWN, ' ', getStateForBuffer());
+						ourMetaState &= ~OUR_TRANSIENT;
+						bridge.tryKeyVibrate();
+						return true;
+					case 102:	// TK-FBP043 Home
+						((vt320) buffer).keyPressed(vt320.KEY_HOME, ' ', getStateForBuffer());
+						ourMetaState &= ~OUR_TRANSIENT;
+						bridge.tryKeyVibrate();
+						return true;
+					case 107:	// TK-FBP043 End
+						((vt320) buffer).keyPressed(vt320.KEY_END, ' ', getStateForBuffer());
+						ourMetaState &= ~OUR_TRANSIENT;
+						bridge.tryKeyVibrate();
+						return true;
+					case 111:	// TK-FBP043 Delete
+						((vt320) buffer).keyPressed(vt320.KEY_DELETE, ' ', getStateForBuffer());
+						ourMetaState &= ~OUR_TRANSIENT;
+						bridge.tryKeyVibrate();
+						return true;
+					case 14:	// TK-FBP043 BackSpace
+						((vt320) buffer).keyPressed(vt320.KEY_BACK_SPACE, ' ', getStateForBuffer());
+						ourMetaState &= ~OUR_TRANSIENT;
+						bridge.tryKeyVibrate();
+						return true;
+//					case 70:	// TK-FBP043 ScrLock
+//						return true;
 					}
 				}
 				if (keyCode == KEYCODE_CTRL_LEFT || keyCode == KEYCODE_CTRL_RIGHT) {
 					metaPress(OUR_CTRL_ON);
 					return true;
 				}
+			}
+
+			// "Hacker's keyboard"の"○"ボタンをカメラキーに割り付け。(ConnectBotのカメラキー機能を使うため。)
+			if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER) {
+				keyCode = KeyEvent.KEYCODE_CAMERA;
 			}
 
 			if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER) {
@@ -277,6 +436,7 @@ public class TerminalKeyListener implements OnKeyListener, OnSharedPreferenceCha
 				return true;
 			}
 
+			// システムからのmetaステートをマージする
 			int derivedMetaState = event.getMetaState();
 			if ((ourMetaState & OUR_SHIFT_MASK) != 0)
 				derivedMetaState |= KeyEvent.META_SHIFT_ON;
@@ -288,6 +448,13 @@ public class TerminalKeyListener implements OnKeyListener, OnSharedPreferenceCha
 			if ((ourMetaState & OUR_TRANSIENT) != 0) {
 				ourMetaState &= ~OUR_TRANSIENT;
 				bridge.redraw();
+			}
+
+			if ((ourMetaState & OUR_CTRL_LOCK2) != 0) {
+				// Left-ALTがALTとして認識されない様にする
+				derivedMetaState &= ~(KeyEvent.META_ALT_ON | KeyEvent.META_ALT_LEFT_ON);
+				// Left-CTRLがCTRLとして認識されない様にする
+				derivedMetaState &= ~(KeyEvent.META_CTRL_LEFT_ON);
 			}
 
 			// Test for modified numbers becoming function keys
@@ -356,6 +523,17 @@ public class TerminalKeyListener implements OnKeyListener, OnSharedPreferenceCha
 			if (mDeadKey != 0) {
 				uchar = KeyCharacterMap.getDeadChar(mDeadKey, keyCode);
 				mDeadKey = 0;
+			}
+
+			if( key_log ) {
+				String log2 = String.format("ConnKey scan=%d(0x%x), dev=%d, key=%d(0x%x), curmeta=%d(0x%x), meta=%d(0x%x), char=%d(0x%x)",
+						event.getScanCode(), event.getScanCode(), event.getDeviceId(),
+						event.getKeyCode(), event.getKeyCode(),
+						derivedMetaState, derivedMetaState,
+						ourMetaState, ourMetaState,
+						uchar, uchar
+						);
+				Log.d(TAG, log2);
 			}
 
 			// If we have a defined non-control character
@@ -477,6 +655,43 @@ public class TerminalKeyListener implements OnKeyListener, OnSharedPreferenceCha
 				((vt320) buffer).keyPressed(vt320.KEY_PAGE_DOWN, ' ',
 						getStateForBuffer());
 				return true;
+
+			case KeyEvent.KEYCODE_F1:
+				((vt320) buffer).keyPressed(vt320.KEY_F1, ' ', 0);
+				return true;
+			case KeyEvent.KEYCODE_F2:
+				((vt320) buffer).keyPressed(vt320.KEY_F2, ' ', 0);
+				return true;
+			case KeyEvent.KEYCODE_F3:
+				((vt320) buffer).keyPressed(vt320.KEY_F3, ' ', 0);
+				return true;
+			case KeyEvent.KEYCODE_F4:
+				((vt320) buffer).keyPressed(vt320.KEY_F4, ' ', 0);
+				return true;
+			case KeyEvent.KEYCODE_F5:
+				((vt320) buffer).keyPressed(vt320.KEY_F5, ' ', 0);
+				return true;
+			case KeyEvent.KEYCODE_F6:
+				((vt320) buffer).keyPressed(vt320.KEY_F6, ' ', 0);
+				return true;
+			case KeyEvent.KEYCODE_F7:
+				((vt320) buffer).keyPressed(vt320.KEY_F7, ' ', 0);
+				return true;
+			case KeyEvent.KEYCODE_F8:
+				((vt320) buffer).keyPressed(vt320.KEY_F8, ' ', 0);
+				return true;
+			case KeyEvent.KEYCODE_F9:
+				((vt320) buffer).keyPressed(vt320.KEY_F9, ' ', 0);
+				return true;
+			case KeyEvent.KEYCODE_F10:
+				((vt320) buffer).keyPressed(vt320.KEY_F10, ' ', 0);
+				return true;
+			case KeyEvent.KEYCODE_F11:
+				((vt320) buffer).keyPressed(vt320.KEY_F11, ' ', 0);
+				return true;
+			case KeyEvent.KEYCODE_F12:
+				((vt320) buffer).keyPressed(vt320.KEY_F12, ' ', 0);
+				return true;
 			}
 
 		} catch (IOException e) {
@@ -581,6 +796,7 @@ public class TerminalKeyListener implements OnKeyListener, OnSharedPreferenceCha
 	 * 2nd press: meta state is locked on<br />
 	 * 3rd press: disable meta state
 	 *
+	 * 1回押すごとにON->LOCK->OFFに切り替わる制御
 	 * @param code
 	 */
 	public void metaPress(int code, boolean forceSticky) {
