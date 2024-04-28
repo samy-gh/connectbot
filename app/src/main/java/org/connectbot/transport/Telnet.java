@@ -68,7 +68,7 @@ public class Telnet extends AbsTransport {
 
 	static final Pattern hostmask;
 	static {
-		hostmask = Pattern.compile("^([0-9a-z.-]+)(:(\\d+))?$", Pattern.CASE_INSENSITIVE);
+		hostmask = Pattern.compile("^([0-9a-z._-]+)(:(\\d+))?$", Pattern.CASE_INSENSITIVE);
 	}
 
 	public Telnet() {
@@ -133,7 +133,7 @@ public class Telnet extends AbsTransport {
 			try {
 				sock.connect(new InetSocketAddress(addr, port));
 				return;
-			} catch (SocketTimeoutException e) {
+			} catch (SocketTimeoutException ignored) {
 			}
 		}
 		throw new SocketTimeoutException("Could not connect; socket timed out");

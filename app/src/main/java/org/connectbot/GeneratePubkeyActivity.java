@@ -24,6 +24,7 @@ import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Security;
 
+import org.connectbot.annotation.KeepForTesting;
 import org.connectbot.bean.PubkeyBean;
 import org.connectbot.util.EntropyDialog;
 import org.connectbot.util.EntropyView;
@@ -33,14 +34,12 @@ import org.connectbot.util.PubkeyDatabase;
 import org.connectbot.util.PubkeyUtils;
 
 import com.trilead.ssh2.crypto.keys.Ed25519Provider;
-import com.trilead.ssh2.signature.ECDSASHA2Verify;
 
 import android.annotation.SuppressLint;
 import android.app.Dialog;
 import android.app.ProgressDialog;
 import android.graphics.PorterDuff;
 import android.os.Bundle;
-import androidx.annotation.VisibleForTesting;
 import androidx.appcompat.app.AppCompatActivity;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -66,7 +65,7 @@ public class GeneratePubkeyActivity extends AppCompatActivity implements OnEntro
 
 	public final static String TAG = "CB.GeneratePubkeyAct";
 
-	private final static int[] ECDSA_SIZES = ECDSASHA2Verify.getCurveSizes();
+	private final static int[] ECDSA_SIZES = new int[] { 256, 384, 521 };
 
 	private LayoutInflater inflater = null;
 
@@ -276,7 +275,7 @@ public class GeneratePubkeyActivity extends AppCompatActivity implements OnEntro
 		entropyDialog.show();
 	}
 
-	@VisibleForTesting
+	@KeepForTesting
 	void setListener(OnKeyGeneratedListener listener) {
 		this.listener = listener;
 	}
